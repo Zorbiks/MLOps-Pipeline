@@ -14,14 +14,12 @@ pipeline {
             steps {
                 echo 'Installing dependencies directly into the Docker container...'
                 sh '''
-                    # Install globally since we are already isolated in a container
-                    python3 -m pip install --upgrade pip setuptools wheel
+                    # Upgrade pip and wheel, but PIN setuptools to <70.0.0 so Ray doesn't break
+                    python3 -m pip install --upgrade pip wheel --root-user-action=ignore
+                    python3 -m pip install "setuptools<70.0.0" --root-user-action=ignore
                     
                     # Install project requirements
-                    python3 -m pip install --no-cache-dir -r requirements.txt
-                    
-                    # Force install setuptools at the end to prevent Ray issues
-                    python3 -m pip install setuptools
+                    python3 -m pip install --no-cache-dir -r requirements.txt --root-user-action=ignore
                 '''
             }
         }
