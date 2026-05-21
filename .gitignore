@@ -1,0 +1,16 @@
+# Jenkins
+jenkins.war
+.jenkins/
+
+# Python / Virtual Environments
+venv/
+__pycache__/
+*.pyc
+
+# MLflow & Logs
+mlruns/
+logs/
+
+# Local Storage / Data (Optional, but recommended if files are large)
+efs/
+storage/
