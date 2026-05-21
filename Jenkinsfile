@@ -6,6 +6,8 @@ pipeline {
         PYTHONUNBUFFERED = '1'
         // Tells Python to treat the root workspace as a package directory
         PYTHONPATH = "${WORKSPACE}"
+        // REQUIRED BY RAY: Add your GitHub username here
+        GITHUB_USERNAME = 'Zorbiks' 
     }
 
     stages {
