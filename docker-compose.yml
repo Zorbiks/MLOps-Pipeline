@@ -6,6 +6,7 @@ services:
     container_name: mlops_jenkins
     restart: unless-stopped
     privileged: true
+    shm_size: '2gb'
     user: root 
     ports:
       - "8080:8080"   # The Jenkins Web UI
