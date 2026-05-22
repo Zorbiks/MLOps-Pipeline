@@ -14,7 +14,8 @@ from numpyencoder import NumpyEncoder
 
 from madewithml import evaluate, predict
 from madewithml.config import MLFLOW_TRACKING_URI, mlflow
-from prometheus_fastapi_instrumentator import Instrumentator
+
+from prometheus_fastapi_instrumentator import Instrumentator, metrics
 
 # Define application
 app = FastAPI(
@@ -36,8 +37,17 @@ class ModelDeployment:
         best_checkpoint = predict.get_best_checkpoint(run_id=run_id)
         self.predictor = predict.TorchPredictor.from_checkpoint(best_checkpoint)
         
-        # FIX: Move Instrumentation inside __init__ to avoid pickling errors
-        Instrumentator().instrument(app).expose(app)
+        # NEW STABLE INSTRUMENTATION
+        # We initialize the instrumentator but we DO NOT call .instrument(app) 
+        # which is what causes the 'options' AttributeError in Ray Proxy.
+        self.instrumentator = Instrumentator()
+        self.instrumentator.add(metrics.request_size())
+        self.instrumentator.add(metrics.response_size())
+        self.instrumentator.add(metrics.latency())
+        self.instrumentator.add(metrics.requests())
+        
+        # This exposes the /metrics endpoint safely
+        self.instrumentator.expose(app)
 
     @app.get("/")
     def _index(self) -> Dict:
