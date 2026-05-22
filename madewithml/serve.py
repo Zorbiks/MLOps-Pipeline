@@ -1,5 +1,6 @@
 import argparse
 import os
+import time
 from http import HTTPStatus
 from typing import Dict
 
@@ -18,27 +19,27 @@ app = FastAPI(
     version="0.1",
 )
 
-
-@serve.deployment(num_replicas="1", ray_actor_options={"num_cpus": 4, "num_gpus": 0})
+# CRITICAL FIX 1: Set num_cpus=0. 
+# This frees up the CPU so Ray Data can safely map batches without deadlocking.
+@serve.deployment(num_replicas=1, ray_actor_options={"num_cpus": 0, "num_gpus": 0})
 @serve.ingress(app)
 class ModelDeployment:
-    def __init__(self, run_id: str, threshold: int = 0.9):
+    def __init__(self, run_id: str, threshold: float = 0.9):
         """Initialize the model."""
         self.run_id = run_id
         self.threshold = threshold
-        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)  # so workers have access to model registry
+        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
         best_checkpoint = predict.get_best_checkpoint(run_id=run_id)
         self.predictor = predict.TorchPredictor.from_checkpoint(best_checkpoint)
 
     @app.get("/")
     def _index(self) -> Dict:
         """Health check."""
-        response = {
+        return {
             "message": HTTPStatus.OK.phrase,
             "status-code": HTTPStatus.OK,
             "data": {},
         }
-        return response
 
     @app.get("/run_id/")
     def _run_id(self) -> Dict:
@@ -54,7 +55,17 @@ class ModelDeployment:
     @app.post("/predict/")
     async def _predict(self, request: Request):
         data = await request.json()
-        sample_ds = ray.data.from_items([{"title": data.get("title", ""), "description": data.get("description", ""), "tag": "other"}])
+        
+        # CRITICAL FIX 2: tag MUST be "other", not "". 
+        # This prevents PyTorch from attempting to cast NaN to int64, stopping the fatal crash!
+        sample_ds = ray.data.from_items([
+            {
+                "title": data.get("title", ""), 
+                "description": data.get("description", ""), 
+                "tag": "other"
+            }
+        ])
+        
         results = predict.predict_proba(ds=sample_ds, predictor=self.predictor)
 
         # Apply custom logic
@@ -72,9 +83,15 @@ if __name__ == "__main__":
     parser.add_argument("--run_id", help="run ID to use for serving.")
     parser.add_argument("--threshold", type=float, default=0.9, help="threshold for `other` class.")
     args = parser.parse_args()
-    ray.init(runtime_env={"env_vars": {"GITHUB_USERNAME": os.environ["GITHUB_USERNAME"]}})
+    
+    ray.init(runtime_env={"env_vars": {"GITHUB_USERNAME": os.environ.get("GITHUB_USERNAME", "")}})
+    
     serve.run(
         ModelDeployment.bind(run_id=args.run_id, threshold=args.threshold), 
         host="0.0.0.0", 
         port=8000
     )
+    
+    # CRITICAL FIX 3: Keep the Python process alive so the local Ray cluster doesn't shut down.
+    while True:
+        time.sleep(60)
