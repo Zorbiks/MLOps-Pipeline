@@ -14,8 +14,8 @@ from numpyencoder import NumpyEncoder
 
 from madewithml import evaluate, predict
 from madewithml.config import MLFLOW_TRACKING_URI, mlflow
-# Use the core prometheus_client instead of the instrumentator
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, CollectorRegistry, multiproc, REGISTRY
+# FIXED IMPORTS
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, REGISTRY
 
 # Define application
 app = FastAPI(
@@ -44,9 +44,10 @@ class ModelDeployment:
             "data": {},
         }
 
-    # STABLE METRICS ENDPOINT: This avoids the Middleware 'options' error
+    # STABLE METRICS ENDPOINT
     @app.get("/metrics")
     def metrics(self):
+        # Generates metrics from the global prometheus registry
         return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/run_id/")
