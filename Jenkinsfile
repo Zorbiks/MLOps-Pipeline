@@ -44,8 +44,8 @@ pipeline {
                     python3 madewithml/train.py \
                         --experiment-name="llm-classification" \
                         --dataset-loc="$(pwd)/datasets/dataset.csv" \
-                        --train-loop-config='{"dropout_p": 0.5, "lr": 1e-4, "lr_factor": 0.8, "lr_patience": 3, "num_epochs": 1, "batch_size": 8}' \
-                        --num-samples=100 \
+                        --train-loop-config='{"dropout_p": 0.5, "lr": 1e-4, "lr_factor": 0.8, "lr_patience": 3, "num_epochs": 1, "batch_size": 2}' \
+                        --num-samples=20 \
                         --num-workers=1 \
                         --cpu-per-worker=1 \
                         --gpu-per-worker=0
