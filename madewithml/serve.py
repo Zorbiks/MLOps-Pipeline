@@ -14,10 +14,9 @@ from numpyencoder import NumpyEncoder
 
 from madewithml import evaluate, predict
 from madewithml.config import MLFLOW_TRACKING_URI, mlflow
-# FIXED IMPORTS
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, REGISTRY
 
-# Define application
+# Define application globally
 app = FastAPI(
     title="Made With ML",
     description="Classify machine learning projects.",
@@ -44,12 +43,6 @@ class ModelDeployment:
             "data": {},
         }
 
-    # STABLE METRICS ENDPOINT
-    @app.get("/metrics")
-    def metrics(self):
-        # Generates metrics from the global prometheus registry
-        return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
-
     @app.get("/run_id/")
     def _run_id(self) -> Dict:
         """Get the run ID."""
@@ -64,15 +57,9 @@ class ModelDeployment:
     @app.post("/predict/")
     async def _predict(self, request: Request):
         data = await request.json()
-        
         sample_ds = ray.data.from_items([
-            {
-                "title": data.get("title", ""), 
-                "description": data.get("description", ""), 
-                "tag": "other"
-            }
+            {"title": data.get("title", ""), "description": data.get("description", ""), "tag": "other"}
         ])
-        
         results = predict.predict_proba(ds=sample_ds, predictor=self.predictor)
 
         for i, result in enumerate(results):
@@ -84,6 +71,10 @@ class ModelDeployment:
         safe_results = json.loads(json.dumps(results, cls=NumpyEncoder))
         return {"results": safe_results}
 
+# Separate the metrics endpoint from the class to prevent serialization issues
+@app.get("/metrics")
+def metrics():
+    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -93,11 +84,9 @@ if __name__ == "__main__":
     
     ray.init(runtime_env={"env_vars": {"GITHUB_USERNAME": os.environ.get("GITHUB_USERNAME", "")}})
     
-    serve.run(
-        ModelDeployment.bind(run_id=args.run_id, threshold=args.threshold), 
-        host="0.0.0.0", 
-        port=8000
-    )
+    # Bind the deployment
+    deployment = ModelDeployment.bind(run_id=args.run_id, threshold=args.threshold)
+    serve.run(deployment, host="0.0.0.0", port=8000)
     
     while True:
         time.sleep(60)
