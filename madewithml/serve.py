@@ -15,31 +15,36 @@ from numpyencoder import NumpyEncoder
 from madewithml import evaluate, predict
 from madewithml.config import MLFLOW_TRACKING_URI, mlflow
 
-# --- CUSTOM ML METRICS ---
-from prometheus_client import Counter, Histogram, CONTENT_TYPE_LATEST, generate_latest, REGISTRY
+# ── Custom ML metrics (lazy-safe: defined here, NOT imported at top level) ────
+# Counter and Histogram are safe to define at module level because they only
+# register metadata into the REGISTRY — no thread locks are created yet.
+from prometheus_client import Counter, Histogram
 
-# 1. Throughput & Error Rates (System Health)
 REQUEST_COUNT = Counter(
-    "http_requests_total", 
-    "Total HTTP Requests", 
+    "http_requests_total",
+    "Total HTTP Requests",
     ["method", "endpoint", "http_status"]
 )
 
-# 2. Latency (System Health)
 REQUEST_LATENCY = Histogram(
-    "http_request_duration_seconds", 
-    "Request latency in seconds", 
-    ["endpoint"]
+    "http_request_duration_seconds",
+    "Request latency in seconds",
+    ["endpoint"],
+    buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
 )
 
-# 3. Prediction Distribution (Drift Detection)
-# If one class suddenly spikes in your Grafana chart, you have Data Drift.
 PREDICTION_COUNT = Counter(
-    "model_predictions_total", 
-    "Count of specific class predictions", 
-    ["class"]
+    "model_predictions_total",
+    "Count of predictions per class (for drift detection)",
+    ["predicted_class"]
 )
 
+THRESHOLD_FALLBACK_COUNT = Counter(
+    "model_threshold_fallbacks_total",
+    "How many times a prediction fell below threshold and was set to 'other'",
+)
+
+# ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Made With ML",
     description="Classify machine learning projects.",
@@ -48,6 +53,8 @@ app = FastAPI(
 
 @app.get("/metrics")
 def metrics():
+    # Lazy import here — keeps thread-locked REGISTRY out of cloudpickle's path
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, REGISTRY
     return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -64,6 +71,7 @@ class ModelDeployment:
     @app.get("/")
     def _index(self) -> Dict:
         """Health check."""
+        REQUEST_COUNT.labels(method="GET", endpoint="/", http_status=200).inc()
         return {
             "message": HTTPStatus.OK.phrase,
             "status-code": HTTPStatus.OK,
@@ -72,19 +80,23 @@ class ModelDeployment:
 
     @app.get("/run_id/")
     def _run_id(self) -> Dict:
+        REQUEST_COUNT.labels(method="GET", endpoint="/run_id/", http_status=200).inc()
         return {"run_id": self.run_id}
 
     @app.post("/evaluate/")
     async def _evaluate(self, request: Request) -> Dict:
+        start = time.time()
         data = await request.json()
         results = evaluate.evaluate(run_id=self.run_id, dataset_loc=data.get("dataset"))
+        REQUEST_LATENCY.labels(endpoint="/evaluate/").observe(time.time() - start)
+        REQUEST_COUNT.labels(method="POST", endpoint="/evaluate/", http_status=200).inc()
         return {"results": results}
 
     @app.post("/predict/")
     async def _predict(self, request: Request):
-        start_time = time.time() # Start timer for latency
-        
+        start = time.time()
         data = await request.json()
+
         sample_ds = ray.data.from_items([{
             "title": data.get("title", ""),
             "description": data.get("description", ""),
@@ -97,13 +109,12 @@ class ModelDeployment:
             prob = result["probabilities"]
             if prob[pred] < self.threshold:
                 results[i]["prediction"] = "other"
-            
-            # --- LOG PREDICTION FOR DRIFT DETECTION ---
-            PREDICTION_COUNT.labels(class=results[i]["prediction"]).inc()
+                THRESHOLD_FALLBACK_COUNT.inc()
 
-        # --- LOG SYSTEM HEALTH METRICS ---
-        duration = time.time() - start_time
-        REQUEST_LATENCY.labels(endpoint="/predict/").observe(duration)
+            # Track prediction distribution for drift detection
+            PREDICTION_COUNT.labels(predicted_class=results[i]["prediction"]).inc()
+
+        REQUEST_LATENCY.labels(endpoint="/predict/").observe(time.time() - start)
         REQUEST_COUNT.labels(method="POST", endpoint="/predict/", http_status=200).inc()
 
         safe_results = json.loads(json.dumps(results, cls=NumpyEncoder))
