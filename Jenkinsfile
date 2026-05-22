@@ -42,6 +42,8 @@ pipeline {
             }
             steps {
                 echo "Push to main detected. Deploying application and updating docs..."
+
+                sh 'python3 -m pip install "click<8.1.0" "typer==0.9.0"'
                 
                 sh '''
                     # 1. MAGICAL FIX: Tell Jenkins NOT to kill our background processes!
