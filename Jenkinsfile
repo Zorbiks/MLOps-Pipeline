@@ -58,14 +58,33 @@ pipeline {
                     fi
                     echo "Found Run ID: $LATEST_RUN_ID"
                     
-                    # 3. Stop any existing deployed models to free up port 8000 and RAM
+                    # 3. Stop any existing deployed models
                     ray stop || true
                     
-                    # 4. Deploy the new model in the background (nohup)
+                    # 4. Deploy the new model in the background
                     nohup python3 madewithml/serve.py --run_id $LATEST_RUN_ID > serve.log 2>&1 &
                     
-                    # 5. Give the server a few seconds to boot up before finishing the pipeline
-                    sleep 15
+                    # 5. ACTIVE POLLING: Wait for the server to become healthy
+                    echo "Waiting for Ray Serve to initialize..."
+                    TIMEOUT=120
+                    ELAPSED=0
+                    SLEEP_INTERVAL=2
+
+                    # The curl command checks the health endpoint (/) 
+                    # -s silences curl output, -f makes curl fail on HTTP errors (like 500 or 404)
+                    while ! curl -s -f http://127.0.0.1:8000/ > /dev/null; do
+                        if [ $ELAPSED -ge $TIMEOUT ]; then
+                            echo "❌ ERROR: Server failed to start within $TIMEOUT seconds!"
+                            echo "--- Printing serve.log for debugging ---"
+                            cat serve.log
+                            exit 1
+                        fi
+                        echo "Server not ready yet. Retrying in $SLEEP_INTERVAL seconds... ($ELAPSED/$TIMEOUT)"
+                        sleep $SLEEP_INTERVAL
+                        ELAPSED=$((ELAPSED + SLEEP_INTERVAL))
+                    done
+                    
+                    echo "✅ Server is up and running successfully!"
                 '''
                 
                 // Build the documentation
