@@ -14,6 +14,7 @@ from numpyencoder import NumpyEncoder
 
 from madewithml import evaluate, predict
 from madewithml.config import MLFLOW_TRACKING_URI, mlflow
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # Define application
 app = FastAPI(
@@ -21,6 +22,8 @@ app = FastAPI(
     description="Classify machine learning projects.",
     version="0.1",
 )
+
+Instrumentator().instrument(app).expose(app)
 
 # CRITICAL FIX 1: Set num_cpus=0. 
 # This frees up the CPU so Ray Data can safely map batches without deadlocking.

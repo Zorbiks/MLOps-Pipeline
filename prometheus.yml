@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 5s # How often to pull data
+
+scrape_configs:
+  - job_name: 'ml-serve-api'
+    static_configs:
+      # This points to your Ray Serve/FastAPI container
+      # If running locally outside Docker, use host.docker.internal:8000
+      - targets: ['host.docker.internal:8000']
