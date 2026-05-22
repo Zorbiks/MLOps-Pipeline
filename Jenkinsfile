@@ -62,17 +62,29 @@ pipeline {
                 echo "Push to main detected. Deploying application and updating docs..."
                 
                 sh '''
+                    # 1. MAGICAL FIX: Tell Jenkins NOT to kill our background processes!
+                    export JENKINS_NODE_COOKIE=dontKillMe
+                    
+                    # 2. Get the latest Model Run ID
                     LATEST_RUN_ID=$(python3 -c "import mlflow; from madewithml.config import MLFLOW_TRACKING_URI; mlflow.set_tracking_uri(MLFLOW_TRACKING_URI); runs=mlflow.search_runs(experiment_names=['llm-classification']); print(runs.iloc[0].run_id if not runs.empty else '')")
                     
                     if [ -z "$LATEST_RUN_ID" ]; then
                         echo "Error: No MLflow runs found. You must train a model first!"
                         exit 1
                     fi
-                    
                     echo "Found Run ID: $LATEST_RUN_ID"
-                    python3 madewithml/serve.py --run_id $LATEST_RUN_ID
+                    
+                    # 3. Stop any existing deployed models to free up port 8000 and RAM
+                    ray stop || true
+                    
+                    # 4. Deploy the new model in the background (nohup)
+                    nohup python3 madewithml/serve.py --run_id $LATEST_RUN_ID > serve.log 2>&1 &
+                    
+                    # 5. Give the server a few seconds to boot up before finishing the pipeline
+                    sleep 15
                 '''
                 
+                // Build the documentation
                 sh 'python3 -m mkdocs build'
             }
         }
