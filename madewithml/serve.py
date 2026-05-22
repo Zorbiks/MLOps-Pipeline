@@ -15,24 +15,21 @@ from numpyencoder import NumpyEncoder
 from madewithml import evaluate, predict
 from madewithml.config import MLFLOW_TRACKING_URI, mlflow
 
-# ── Separate app for metrics only ────────────────────────────────────────────
-# Keep this app free of any prometheus imports at module level so cloudpickle
-# never tries to serialize thread locks embedded in the REGISTRY object.
-metrics_app = FastAPI(title="Metrics")
-
-@metrics_app.get("/metrics")
-def metrics():
-    # Lazy import so the registry is only touched at request time, not at
-    # class-definition / pickling time.
-    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, REGISTRY
-    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
-
-# ── Main inference app ────────────────────────────────────────────────────────
+# ── Single app with metrics mounted as a sub-application ─────────────────────
 app = FastAPI(
     title="Made With ML",
     description="Classify machine learning projects.",
     version="0.1",
 )
+
+# Separate mini-app for metrics — mounted AFTER class definition (see bottom)
+metrics_app = FastAPI()
+
+@metrics_app.get("/")
+def metrics():
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, REGISTRY
+    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
+
 
 @serve.deployment(num_replicas=1, ray_actor_options={"num_cpus": 0, "num_gpus": 0})
 @serve.ingress(app)
@@ -83,38 +80,23 @@ class ModelDeployment:
         return {"results": safe_results}
 
 
-# ── Metrics deployment (lightweight, no ML deps) ──────────────────────────────
-@serve.deployment(num_replicas=1, ray_actor_options={"num_cpus": 0, "num_gpus": 0})
-@serve.ingress(metrics_app)
-class MetricsDeployment:
-    pass  # all logic lives in the route above
+# Mount AFTER class definition so cloudpickle has already processed `app`
+# before the prometheus-backed metrics_app is attached to it.
+app.mount("/metrics", metrics_app)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_id", help="run ID to use for serving.")
-    parser.add_argument("--threshold", type=float, default=0.9, help="threshold for `other` class.")
+    parser.add_argument("--threshold", type=float, default=0.9)
     args = parser.parse_args()
 
     ray.init(runtime_env={"env_vars": {"GITHUB_USERNAME": os.environ.get("GITHUB_USERNAME", "")}})
 
     serve.run(
-        # Route /metrics to MetricsDeployment, everything else to ModelDeployment
-        serve.application(
-            ModelDeployment.bind(run_id=args.run_id, threshold=args.threshold),
-        ),
+        ModelDeployment.bind(run_id=args.run_id, threshold=args.threshold),
         host="0.0.0.0",
         port=8000,
-    )
-
-    # Run MetricsDeployment on a separate port so Prometheus can scrape it
-    # without conflicting with the inference traffic.
-    serve.run(
-        MetricsDeployment.bind(),
-        name="metrics",
-        host="0.0.0.0",
-        port=8001,
-        route_prefix="/",
     )
 
     while True:
