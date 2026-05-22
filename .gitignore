@@ -14,3 +14,4 @@ logs/
 # Local Storage / Data (Optional, but recommended if files are large)
 efs/
 storage/
+
