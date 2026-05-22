@@ -62,7 +62,7 @@ pipeline {
                 echo "Push to main detected. Deploying application and updating docs..."
                 
                 sh '''
-                    LATEST_RUN_ID=$(python3 -c "import mlflow; from madewithml.config import MLFLOW_TRACKING_URI; mlflow.set_tracking_uri(MLFLOW_TRACKING_URI); runs=mlflow.search_runs(); print(runs.iloc[0].run_id if not runs.empty else '')")
+                    LATEST_RUN_ID=$(python3 -c "import mlflow; from madewithml.config import MLFLOW_TRACKING_URI; mlflow.set_tracking_uri(MLFLOW_TRACKING_URI); runs=mlflow.search_runs(experiment_names=['llm-classification']); print(runs.iloc[0].run_id if not runs.empty else '')")
                     
                     if [ -z "$LATEST_RUN_ID" ]; then
                         echo "Error: No MLflow runs found. You must train a model first!"
