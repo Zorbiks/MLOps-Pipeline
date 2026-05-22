@@ -15,16 +15,39 @@ from numpyencoder import NumpyEncoder
 from madewithml import evaluate, predict
 from madewithml.config import MLFLOW_TRACKING_URI, mlflow
 
+# --- CUSTOM ML METRICS ---
+from prometheus_client import Counter, Histogram, CONTENT_TYPE_LATEST, generate_latest, REGISTRY
+
+# 1. Throughput & Error Rates (System Health)
+REQUEST_COUNT = Counter(
+    "http_requests_total", 
+    "Total HTTP Requests", 
+    ["method", "endpoint", "http_status"]
+)
+
+# 2. Latency (System Health)
+REQUEST_LATENCY = Histogram(
+    "http_request_duration_seconds", 
+    "Request latency in seconds", 
+    ["endpoint"]
+)
+
+# 3. Prediction Distribution (Drift Detection)
+# If one class suddenly spikes in your Grafana chart, you have Data Drift.
+PREDICTION_COUNT = Counter(
+    "model_predictions_total", 
+    "Count of specific class predictions", 
+    ["class"]
+)
+
 app = FastAPI(
     title="Made With ML",
     description="Classify machine learning projects.",
     version="0.1",
 )
 
-# ── Metrics route on the SAME app, lazy import avoids pickle issues ───────────
 @app.get("/metrics")
 def metrics():
-    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest, REGISTRY
     return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -59,6 +82,8 @@ class ModelDeployment:
 
     @app.post("/predict/")
     async def _predict(self, request: Request):
+        start_time = time.time() # Start timer for latency
+        
         data = await request.json()
         sample_ds = ray.data.from_items([{
             "title": data.get("title", ""),
@@ -72,6 +97,14 @@ class ModelDeployment:
             prob = result["probabilities"]
             if prob[pred] < self.threshold:
                 results[i]["prediction"] = "other"
+            
+            # --- LOG PREDICTION FOR DRIFT DETECTION ---
+            PREDICTION_COUNT.labels(class=results[i]["prediction"]).inc()
+
+        # --- LOG SYSTEM HEALTH METRICS ---
+        duration = time.time() - start_time
+        REQUEST_LATENCY.labels(endpoint="/predict/").observe(duration)
+        REQUEST_COUNT.labels(method="POST", endpoint="/predict/", http_status=200).inc()
 
         safe_results = json.loads(json.dumps(results, cls=NumpyEncoder))
         return {"results": safe_results}
